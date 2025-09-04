@@ -5,6 +5,16 @@ from tkinter import filedialog, messagebox, ttk
 import psutil
 import platform
 
+
+def format_size(size):
+    """Formata o tamanho do arquivo em KB, MB, GB"""
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} TB"
+
+
 class FileManager:
     def __init__(self, root):
         self.root = root
@@ -30,36 +40,61 @@ class FileManager:
 
         self.path_var = tk.StringVar(value=self.current_path)
         self.path_entry = tk.Entry(path_frame, textvariable=self.path_var)
-        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
         tk.Button(path_frame, text="Ir", command=self.load_files).pack(side=tk.LEFT, padx=5)
         tk.Button(path_frame, text="Voltar", command=self.go_back).pack(side=tk.LEFT, padx=5)
 
-        # Lista de arquivos
-        self.tree = ttk.Treeview(left_frame, columns=("name", "type", "size"), show="headings")
+        # Lista de arquivos com scrollbar
+        tree_frame = tk.Frame(left_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.tree = ttk.Treeview(tree_frame, columns=("name", "type", "size"),
+                                 show="headings", selectmode="extended")
         self.tree.heading("name", text="Nome")
         self.tree.heading("type", text="Tipo")
         self.tree.heading("size", text="Tamanho")
-        self.tree.pack(fill=tk.BOTH, expand=True)
+
+        self.tree.column("name", width=400)
+        self.tree.column("type", width=100, anchor="center")
+        self.tree.column("size", width=120, anchor="e")
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscroll=scrollbar.set)
+
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.tree.bind("<Double-1>", self.on_double_click)
+        self.tree.bind("<Button-3>", self.show_context_menu)  
 
         # Botões de ação
         btn_frame = tk.Frame(left_frame)
-        btn_frame.pack(fill=tk.X)
+        btn_frame.pack(fill=tk.X, pady=5)
 
-        tk.Button(btn_frame, text="Excluir", command=self.delete_item).pack(side=tk.LEFT, padx=5, pady=5)
-        tk.Button(btn_frame, text="Copiar", command=self.copy_item).pack(side=tk.LEFT, padx=5, pady=5)
-        tk.Button(btn_frame, text="Mover", command=self.move_item).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Button(btn_frame, text="Excluir", command=self.delete_item).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Copiar", command=self.copy_item).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Mover", command=self.move_item).pack(side=tk.LEFT, padx=5)
 
         # Painel direito: informações do sistema
-        self.info_label = tk.Label(right_frame, text="", justify=tk.LEFT, anchor="nw", bg="#f0f0f0", font=("Consolas", 10))
+        self.info_label = tk.Label(
+            right_frame, text="", justify=tk.LEFT, anchor="nw",
+            bg="#f0f0f0", font=("Consolas", 10)
+        )
         self.info_label.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Menu de contexto
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="Abrir", command=self.open_item)
+        self.context_menu.add_command(label="Copiar", command=self.copy_item)
+        self.context_menu.add_command(label="Mover", command=self.move_item)
+        self.context_menu.add_command(label="Excluir", command=self.delete_item)
 
         self.load_files()
         self.update_system_info()
 
     def load_files(self):
+        """Carrega os arquivos e pastas no diretório atual"""
         self.tree.delete(*self.tree.get_children())
         path = self.path_var.get()
 
@@ -76,11 +111,14 @@ class FileManager:
                     self.tree.insert("", tk.END, values=(item, "Pasta", ""))
                 else:
                     size = os.path.getsize(full_path)
-                    self.tree.insert("", tk.END, values=(item, "Arquivo", f"{size} bytes"))
+                    self.tree.insert("", tk.END, values=(item, "Arquivo", format_size(size)))
         except Exception as e:
             messagebox.showerror("Erro", str(e))
 
     def on_double_click(self, event):
+        self.open_item()
+
+    def open_item(self):
         selected = self.tree.selection()
         if not selected:
             return
@@ -97,6 +135,7 @@ class FileManager:
                 messagebox.showerror("Erro", str(e))
 
     def go_back(self):
+        """Volta para a pasta pai"""
         parent = os.path.dirname(self.current_path)
         if parent and parent != self.current_path:
             self.path_var.set(parent)
@@ -106,53 +145,65 @@ class FileManager:
         selected = self.tree.selection()
         if not selected:
             return
-        file_name = self.tree.item(selected[0])["values"][0]
-        path = os.path.join(self.current_path, file_name)
-        try:
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            else:
-                os.remove(path)
-            self.load_files()
-        except Exception as e:
-            messagebox.showerror("Erro", str(e))
+        for sel in selected:
+            file_name = self.tree.item(sel)["values"][0]
+            path = os.path.join(self.current_path, file_name)
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+            except Exception as e:
+                messagebox.showerror("Erro", str(e))
+        self.load_files()
 
     def copy_item(self):
         selected = self.tree.selection()
         if not selected:
             return
-        file_name = self.tree.item(selected[0])["values"][0]
-        src = os.path.join(self.current_path, file_name)
         dest = filedialog.askdirectory()
-        if dest:
+        if not dest:
+            return
+        for sel in selected:
+            file_name = self.tree.item(sel)["values"][0]
+            src = os.path.join(self.current_path, file_name)
             try:
                 if os.path.isdir(src):
                     shutil.copytree(src, os.path.join(dest, file_name))
                 else:
                     shutil.copy2(src, dest)
-                messagebox.showinfo("Sucesso", "Arquivo/Pasta copiado!")
             except Exception as e:
                 messagebox.showerror("Erro", str(e))
+        messagebox.showinfo("Sucesso", "Arquivo(s)/Pasta(s) copiado(s)!")
 
     def move_item(self):
         selected = self.tree.selection()
         if not selected:
             return
-        file_name = self.tree.item(selected[0])["values"][0]
-        src = os.path.join(self.current_path, file_name)
         dest = filedialog.askdirectory()
-        if dest:
+        if not dest:
+            return
+        for sel in selected:
+            file_name = self.tree.item(sel)["values"][0]
+            src = os.path.join(self.current_path, file_name)
             try:
                 shutil.move(src, dest)
-                self.load_files()
-                messagebox.showinfo("Sucesso", "Arquivo/Pasta movido!")
             except Exception as e:
                 messagebox.showerror("Erro", str(e))
+        self.load_files()
+        messagebox.showinfo("Sucesso", "Arquivo(s)/Pasta(s) movido(s)!")
+
+    def show_context_menu(self, event):
+        """Exibe o menu de contexto ao clicar com botão direito"""
+        try:
+            self.tree.selection_set(self.tree.identify_row(event.y)) 
+            self.context_menu.post(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
 
     def update_system_info(self):
         """Exibe informações da memória e discos"""
         try:
-            # Memória
             mem = psutil.virtual_memory()
             mem_info = (
                 f"Memória RAM:\n"
@@ -160,12 +211,10 @@ class FileManager:
                 f"  Usada: {mem.used // (1024**2)} MB\n"
                 f"  Livre: {mem.available // (1024**2)} MB\n"
             )
-            # Alguns sistemas têm 'cached'
             if hasattr(mem, "cached"):
                 mem_info += f"  Cache: {mem.cached // (1024**2)} MB\n"
             mem_info += "\n"
 
-            # Disco principal
             disk = psutil.disk_usage("/")
             partitions = psutil.disk_partitions()
             fs_info = ""
@@ -180,7 +229,6 @@ class FileManager:
                 f"Sistemas de Arquivos:\n{fs_info}\n"
             )
 
-            # SSD ou HD (simplificado)
             try:
                 ssd_info = "SSD detectado" if "SSD" in platform.platform() else "HDD ou não detectado"
             except:
@@ -190,8 +238,8 @@ class FileManager:
         except Exception as e:
             self.info_label.config(text="Erro ao obter informações do sistema: " + str(e))
 
-        # Atualiza a cada 3 segundos
         self.root.after(3000, self.update_system_info)
+
 
 if __name__ == "__main__":
     root = tk.Tk()
